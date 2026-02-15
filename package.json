@@ -1,0 +1,74 @@
+{
+  "name": "dashq",
+  "version": "0.0.1",
+  "description": "Database-first functional job queue for Node.js with a built-in dashboard",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsup && pnpm build:dashboard && rm -rf dist/dashboard && cp -r dashboard/dist dist/dashboard",
+    "build:dashboard": "cd dashboard && pnpm build",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "example:basic": "pnpm build && node --import tsx examples/basic.ts",
+    "example:dashboard": "pnpm build && node --import tsx examples/dashboard.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "packageManager": "pnpm@10.28.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DashQ-Official/dashq.git"
+  },
+  "homepage": "https://github.com/DashQ-Official/dashq#readme",
+  "bugs": {
+    "url": "https://github.com/DashQ-Official/dashq/issues"
+  },
+  "license": "MIT",
+  "keywords": [
+    "job-queue",
+    "background-jobs",
+    "task-queue",
+    "dashboard",
+    "sqlite",
+    "postgres"
+  ],
+  "peerDependencies": {
+    "pg": "^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "pg": {
+      "optional": true
+    }
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.2.1",
+    "@types/pg": "^8.11.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "@fastify/static": "^9.0.0",
+    "better-sqlite3": "^12.6.2",
+    "fastify": "^5.7.4",
+    "fastify-plugin": "^5.1.0"
+  }
+}

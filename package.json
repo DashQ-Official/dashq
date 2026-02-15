@@ -1,6 +1,6 @@
 {
   "name": "dashq",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Database-first functional job queue for Node.js with a built-in dashboard",
   "type": "module",
   "exports": {

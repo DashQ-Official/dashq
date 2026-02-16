@@ -218,4 +218,6 @@ export type WorkerOptions = {
   staleCheckInterval?: number;
   /** Max wait for current job on shutdown in ms. Defaults to 30000. */
   shutdownTimeout?: number;
+  /** Max concurrent jobs per worker. Defaults to 1. */
+  concurrency?: number;
 };

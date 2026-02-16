@@ -79,6 +79,17 @@ export function validateConfig(options: StartOptions): void {
     throw new Error("DashQ: 'worker' must be a boolean or WorkerOptions object.");
   }
 
+  if (typeof options.worker === "object" && options.worker.concurrency !== undefined) {
+    if (
+      !Number.isInteger(options.worker.concurrency) ||
+      options.worker.concurrency < 1
+    ) {
+      throw new Error(
+        `DashQ: 'worker.concurrency' must be a positive integer (>= 1). Got: ${options.worker.concurrency}`,
+      );
+    }
+  }
+
   if (
     options.dashboard !== undefined &&
     typeof options.dashboard !== "boolean" &&

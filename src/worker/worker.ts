@@ -56,6 +56,7 @@ export function createWorker(
     options?.staleCheckInterval ?? DEFAULT_STALE_CHECK_INTERVAL;
   const shutdownTimeout =
     options?.shutdownTimeout ?? DEFAULT_SHUTDOWN_TIMEOUT;
+  const concurrency = options?.concurrency ?? 1;
 
   // Worker identity
   const workerId = generateId();
@@ -69,7 +70,8 @@ export function createWorker(
   let currentInterval = pollingInterval;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let staleTimer: ReturnType<typeof setInterval> | null = null;
-  let currentJobPromise: Promise<void> | null = null;
+  const inFlight = new Set<Promise<void>>();
+  let polling = false;
 
   // -------------------------------------------------------------------------
   // Poll scheduling
@@ -81,26 +83,29 @@ export function createWorker(
   }
 
   async function pollTick(): Promise<void> {
-    if (!running) return;
+    if (polling || !running) return;
+    polling = true;
 
     try {
-      const job = await adapter.claimNextJob(workerInfo);
+      while (running && inFlight.size < concurrency) {
+        const job = await adapter.claimNextJob(workerInfo);
 
-      if (job) {
-        currentInterval = pollingInterval; // reset backoff
-        const jobPromise = executeJob(job);
-        currentJobPromise = jobPromise;
-        try {
-          await jobPromise;
-        } finally {
-          currentJobPromise = null;
+        if (job) {
+          currentInterval = pollingInterval; // reset backoff
+          const promise = executeJob(job);
+          inFlight.add(promise);
+          promise.finally(() => {
+            inFlight.delete(promise);
+            if (running) schedulePoll(); // backfill freed slot
+          });
+        } else {
+          // Adaptive backoff — no job found
+          currentInterval = Math.min(
+            currentInterval * backoffMultiplier,
+            maxPollingInterval,
+          );
+          break;
         }
-      } else {
-        // Adaptive backoff — no job found
-        currentInterval = Math.min(
-          currentInterval * backoffMultiplier,
-          maxPollingInterval,
-        );
       }
     } catch {
       // DB error or unexpected failure — apply backoff, keep polling
@@ -108,9 +113,15 @@ export function createWorker(
         currentInterval * backoffMultiplier,
         maxPollingInterval,
       );
+    } finally {
+      polling = false;
     }
 
-    schedulePoll();
+    // Only schedule next poll if there are free slots.
+    // When all slots are full, .finally() callbacks handle rescheduling.
+    if (inFlight.size < concurrency) {
+      schedulePoll();
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -139,9 +150,13 @@ export function createWorker(
     }
 
     let context: JobContext | undefined;
+    let flushInterval: ReturnType<typeof setInterval> | null = null;
     try {
       await withJobContext(job, async () => {
         context = getJobContext();
+        flushInterval = setInterval(async () => {
+          if (context) await flushLogs(context, adapter);
+        }, 2_000);
         await registered.handler(...args);
       });
       await adapter.markSucceeded(job.id);
@@ -167,10 +182,9 @@ export function createWorker(
       } else {
         await adapter.markFailed(job.id, errorMessage);
       }
-    }
-
-    if (context) {
-      await flushLogs(context, adapter);
+    } finally {
+      if (flushInterval !== null) clearInterval(flushInterval);
+      if (context) await flushLogs(context, adapter);
     }
   }
 
@@ -211,12 +225,12 @@ export function createWorker(
       staleTimer = null;
     }
 
-    // Wait for in-flight job with timeout
-    if (currentJobPromise) {
+    // Wait for all in-flight jobs with timeout
+    if (inFlight.size > 0) {
       const timeout = new Promise<void>((resolve) =>
         setTimeout(resolve, shutdownTimeout),
       );
-      await Promise.race([currentJobPromise, timeout]);
+      await Promise.race([Promise.allSettled([...inFlight]), timeout]);
     }
   }
 

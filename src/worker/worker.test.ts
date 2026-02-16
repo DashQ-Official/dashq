@@ -985,6 +985,205 @@ describe("createWorker", () => {
   });
 
   // =========================================================================
+  // Concurrency
+  // =========================================================================
+
+  describe("concurrency", () => {
+    it("claims up to N jobs concurrently", async () => {
+      const resolvers: Array<() => void> = [];
+      register("test.job", async () => {
+        await new Promise<void>((r) => { resolvers.push(r); });
+      });
+
+      const adapter = createMockAdapter({
+        claimNextJob: vi.fn()
+          .mockResolvedValueOnce(makeJob({ id: "j1" }))
+          .mockResolvedValueOnce(makeJob({ id: "j2" }))
+          .mockResolvedValueOnce(makeJob({ id: "j3" }))
+          .mockResolvedValue(null),
+      });
+
+      const worker = createWorker(adapter, {
+        pollingInterval: 100,
+        concurrency: 3,
+      });
+      worker.start();
+      await vi.advanceTimersByTimeAsync(100);
+
+      // All 3 jobs should be claimed in a single poll tick (stops when slots full)
+      expect(adapter.claimNextJob).toHaveBeenCalledTimes(3);
+      expect(resolvers).toHaveLength(3);
+
+      // Resolve all and stop
+      resolvers.forEach((r) => r());
+      await worker.stop();
+    });
+
+    it("does not exceed the concurrency limit", async () => {
+      const resolvers: Array<() => void> = [];
+      register("test.job", async () => {
+        await new Promise<void>((r) => { resolvers.push(r); });
+      });
+
+      // Return jobs indefinitely
+      const adapter = createMockAdapter({
+        claimNextJob: vi.fn().mockImplementation(async () => {
+          return makeJob({ id: `j${vi.mocked(adapter.claimNextJob).mock.calls.length}` });
+        }),
+      });
+
+      const worker = createWorker(adapter, {
+        pollingInterval: 100,
+        concurrency: 2,
+      });
+      worker.start();
+      await vi.advanceTimersByTimeAsync(100);
+
+      // Should claim exactly 2 (concurrency limit)
+      expect(adapter.claimNextJob).toHaveBeenCalledTimes(2);
+      expect(resolvers).toHaveLength(2);
+
+      resolvers.forEach((r) => r());
+      await worker.stop();
+    });
+
+    it("fills slots eagerly without waiting for poll intervals", async () => {
+      const resolvers: Array<() => void> = [];
+      register("test.job", async () => {
+        await new Promise<void>((r) => { resolvers.push(r); });
+      });
+
+      const adapter = createMockAdapter({
+        claimNextJob: vi.fn()
+          .mockResolvedValueOnce(makeJob({ id: "j1" }))
+          .mockResolvedValueOnce(makeJob({ id: "j2" }))
+          .mockResolvedValueOnce(makeJob({ id: "j3" }))
+          .mockResolvedValue(null),
+      });
+
+      const worker = createWorker(adapter, {
+        pollingInterval: 100,
+        concurrency: 5,
+      });
+      worker.start();
+
+      // A single poll tick should fill all available slots
+      await vi.advanceTimersByTimeAsync(100);
+
+      // All 3 jobs claimed in one tick (plus 1 null that breaks the loop since concurrency=5)
+      expect(adapter.claimNextJob).toHaveBeenCalledTimes(4);
+      expect(resolvers).toHaveLength(3);
+
+      resolvers.forEach((r) => r());
+      await worker.stop();
+    });
+
+    it("backfills when a job completes and a slot opens", async () => {
+      const resolvers: Array<() => void> = [];
+      register("test.job", async () => {
+        await new Promise<void>((r) => { resolvers.push(r); });
+      });
+
+      let claimCount = 0;
+      const adapter = createMockAdapter({
+        claimNextJob: vi.fn().mockImplementation(async () => {
+          claimCount++;
+          if (claimCount <= 3) return makeJob({ id: `j${claimCount}` });
+          return null;
+        }),
+      });
+
+      const worker = createWorker(adapter, {
+        pollingInterval: 100,
+        concurrency: 2,
+      });
+      worker.start();
+
+      // First tick: claims 2 jobs (slots full)
+      await vi.advanceTimersByTimeAsync(100);
+      expect(resolvers).toHaveLength(2);
+
+      // Complete first job — should trigger backfill
+      resolvers[0]();
+      await vi.advanceTimersByTimeAsync(0); // let .finally() run
+
+      // The backfill poll should claim the 3rd job
+      await vi.advanceTimersByTimeAsync(100);
+      expect(resolvers).toHaveLength(3);
+
+      // Resolve remaining
+      resolvers[1]();
+      resolvers[2]();
+      await worker.stop();
+    });
+
+    it("graceful shutdown waits for all in-flight jobs", async () => {
+      const resolvers: Array<() => void> = [];
+      register("test.job", async () => {
+        await new Promise<void>((r) => { resolvers.push(r); });
+      });
+
+      const adapter = createMockAdapter({
+        claimNextJob: vi.fn()
+          .mockResolvedValueOnce(makeJob({ id: "j1" }))
+          .mockResolvedValueOnce(makeJob({ id: "j2" }))
+          .mockResolvedValue(null),
+      });
+
+      const worker = createWorker(adapter, {
+        pollingInterval: 100,
+        concurrency: 3,
+        shutdownTimeout: 5000,
+      });
+      worker.start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(resolvers).toHaveLength(2);
+
+      let stopped = false;
+      const stopPromise = worker.stop().then(() => { stopped = true; });
+
+      // Still running — both jobs in flight
+      expect(stopped).toBe(false);
+
+      // Complete first job — still one in flight
+      resolvers[0]();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stopped).toBe(false);
+
+      // Complete second job — all done
+      resolvers[1]();
+      await stopPromise;
+      expect(stopped).toBe(true);
+    });
+
+    it("default concurrency=1 matches existing sequential behavior", async () => {
+      const resolvers: Array<() => void> = [];
+      register("test.job", async () => {
+        await new Promise<void>((r) => { resolvers.push(r); });
+      });
+
+      const adapter = createMockAdapter({
+        claimNextJob: vi.fn()
+          .mockResolvedValueOnce(makeJob({ id: "j1" }))
+          .mockResolvedValueOnce(makeJob({ id: "j2" }))
+          .mockResolvedValue(null),
+      });
+
+      // No concurrency option — defaults to 1
+      const worker = createWorker(adapter, { pollingInterval: 100 });
+      worker.start();
+      await vi.advanceTimersByTimeAsync(100);
+
+      // Only 1 job claimed (slot full at concurrency=1)
+      expect(adapter.claimNextJob).toHaveBeenCalledTimes(1);
+      expect(resolvers).toHaveLength(1);
+
+      resolvers[0]();
+      await worker.stop();
+    });
+  });
+
+  // =========================================================================
   // Error resilience
   // =========================================================================
 

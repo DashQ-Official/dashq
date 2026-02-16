@@ -16,9 +16,12 @@ const greeting = defineJob("greeting", async (name: string) => {
 
 const slowJob = defineJob(
   "slow-task",
-  async (seconds: number) => {
-    console.log(`Starting slow task (${seconds}s)...`);
-    await new Promise((r) => setTimeout(r, seconds * 1000));
+  async () => {
+    console.log("Starting slow task (60s)...");
+    for (let elapsed = 5; elapsed <= 60; elapsed += 5) {
+      await new Promise((r) => setTimeout(r, 5000));
+      console.log(`Slow task running... ${elapsed}s / 60s`);
+    }
     console.log("Slow task done!");
   },
   { maxAttempts: 2 },
@@ -36,6 +39,9 @@ const failingJob = defineJob("flaky-task", async () => {
 const handle = await start({
   database: "file:example.db",
   port: 3000,
+  worker: {
+    concurrency: 5
+  }
 });
 
 console.log(`DashQ is running — open http://localhost:${handle.port}/dashq/`);
@@ -44,14 +50,14 @@ console.log(`DashQ is running — open http://localhost:${handle.port}/dashq/`);
 for (let i = 0; i < 5; i++) {
   await greeting.enqueue(`User ${i}`);
 }
-await slowJob.enqueue(3);
+await slowJob.enqueue();
 await failingJob.enqueue();
 
 // 4. Enqueue more jobs every 10 seconds so there's always fresh data
 setInterval(async () => {
   const jobs = [
     () => greeting.enqueue("Periodic"),
-    () => slowJob.enqueue(2),
+    () => slowJob.enqueue(),
     () => failingJob.enqueue(),
   ];
   const pick = jobs[Math.floor(Math.random() * jobs.length)]!;

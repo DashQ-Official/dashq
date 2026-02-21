@@ -23,6 +23,9 @@ export type {
   WorkerOptions,
   RetentionOptions,
   CleanupResult,
+  WorkerStatus,
+  WorkerRecord,
+  WorkerWithStats,
 } from "./types.js";
 
 // Database

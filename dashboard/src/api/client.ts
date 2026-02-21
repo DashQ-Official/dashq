@@ -15,6 +15,7 @@ export type Job = {
   run_at: string;
   locked_until: string | null;
   last_error: string | null;
+  worker_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -29,6 +30,20 @@ export type JobLog = {
 };
 
 export type OverviewCounts = Record<JobStatus, number>;
+
+export type WorkerStatus = "active" | "stopped";
+
+export type WorkerWithStats = {
+  id: string;
+  hostname: string;
+  pid: number;
+  concurrency: number;
+  status: WorkerStatus;
+  started_at: string;
+  last_heartbeat: string;
+  stopped_at: string | null;
+  running_jobs: number;
+};
 
 export type JobFilter = {
   status?: JobStatus;
@@ -59,7 +74,8 @@ function resolveBasePath(): string {
   // Strip known SPA routes to get base
   const cleaned = path
     .replace(/\/jobs\/[^/]+$/, "")
-    .replace(/\/jobs$/, "");
+    .replace(/\/jobs$/, "")
+    .replace(/\/workers$/, "");
   return cleaned || "/dashq";
 }
 
@@ -149,5 +165,20 @@ export const api = {
 
   deleteJob(id: string) {
     return fetchApi<void>(`/jobs/${id}`, { method: "DELETE" });
+  },
+
+  getWorkers(params: { status?: WorkerStatus } = {}) {
+    const qs = new URLSearchParams();
+    if (params.status) qs.set("status", params.status);
+    const q = qs.toString();
+    return fetchApi<{ workers: WorkerWithStats[] }>(`/workers${q ? `?${q}` : ""}`);
+  },
+
+  getWorker(id: string) {
+    return fetchApi<{ worker: WorkerWithStats }>(`/workers/${id}`);
+  },
+
+  getWorkerJobs(id: string) {
+    return fetchApi<{ jobs: Job[]; total: number }>(`/workers/${id}/jobs`);
   },
 };

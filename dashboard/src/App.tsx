@@ -4,6 +4,7 @@ import { Layout } from "@/components/Layout";
 import { Overview } from "@/pages/Overview";
 import { JobsList } from "@/pages/JobsList";
 import { JobDetail } from "@/pages/JobDetail";
+import { Workers } from "@/pages/Workers";
 import { basePath } from "@/api/client";
 
 export function App() {
@@ -15,6 +16,7 @@ export function App() {
             <Route path="/" component={Overview} />
             <Route path="/jobs" component={JobsList} />
             <Route path="/jobs/:id" component={JobDetail} />
+            <Route path="/workers" component={Workers} />
             <Route>
               <div className="flex flex-col items-center justify-center py-20">
                 <h2 className="text-xl font-semibold">404</h2>

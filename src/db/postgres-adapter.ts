@@ -16,6 +16,9 @@ import type {
   JobFilter,
   JobStatus,
   WorkerInfo,
+  WorkerRecord,
+  WorkerWithStats,
+  WorkerStatus,
 } from "../types.js";
 import { runMigrations } from "./schema.js";
 import { generateId } from "./uuid.js";
@@ -35,6 +38,7 @@ const VALID_UPDATE_COLUMNS = new Set([
   "run_at",
   "locked_until",
   "last_error",
+  "worker_id",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -116,6 +120,10 @@ export function createPostgresAdapter(connectionString: string): DatabaseAdapter
       conditions.push(`job_type = $${paramIndex++}`);
       params.push(filter.job_type);
     }
+    if (filter.worker_id !== undefined) {
+      conditions.push(`worker_id = $${paramIndex++}`);
+      params.push(filter.worker_id);
+    }
 
     const whereClause =
       conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -191,15 +199,15 @@ export function createPostgresAdapter(connectionString: string): DatabaseAdapter
 
     const result = await pool.query(
       `UPDATE dashq_jobs
-       SET status = 'running', locked_until = $1, attempts = attempts + 1, updated_at = $2
+       SET status = 'running', locked_until = $1, worker_id = $2, attempts = attempts + 1, updated_at = $3
        WHERE id = (
          SELECT id FROM dashq_jobs
-         WHERE status = 'queued' AND run_at <= $3
+         WHERE status = 'queued' AND run_at <= $4
          ORDER BY run_at ASC LIMIT 1
          FOR UPDATE SKIP LOCKED
        )
        RETURNING *`,
-      [lockedUntilIso, nowIso, nowIso],
+      [lockedUntilIso, workerInfo.worker_id, nowIso, nowIso],
     );
 
     return (result.rows[0] as Job) ?? null;
@@ -207,21 +215,21 @@ export function createPostgresAdapter(connectionString: string): DatabaseAdapter
 
   async function markSucceeded(id: string): Promise<void> {
     await pool.query(
-      `UPDATE dashq_jobs SET status = 'succeeded', locked_until = NULL, updated_at = $1 WHERE id = $2`,
+      `UPDATE dashq_jobs SET status = 'succeeded', locked_until = NULL, worker_id = NULL, updated_at = $1 WHERE id = $2`,
       [new Date().toISOString(), id],
     );
   }
 
   async function markFailed(id: string, error: string): Promise<void> {
     await pool.query(
-      `UPDATE dashq_jobs SET status = 'failed', locked_until = NULL, last_error = $1, updated_at = $2 WHERE id = $3`,
+      `UPDATE dashq_jobs SET status = 'failed', locked_until = NULL, worker_id = NULL, last_error = $1, updated_at = $2 WHERE id = $3`,
       [error, new Date().toISOString(), id],
     );
   }
 
   async function requeueJob(id: string): Promise<void> {
     await pool.query(
-      `UPDATE dashq_jobs SET status = 'queued', locked_until = NULL, updated_at = $1 WHERE id = $2`,
+      `UPDATE dashq_jobs SET status = 'queued', locked_until = NULL, worker_id = NULL, updated_at = $1 WHERE id = $2`,
       [new Date().toISOString(), id],
     );
   }
@@ -229,7 +237,7 @@ export function createPostgresAdapter(connectionString: string): DatabaseAdapter
   async function recoverStaleJobs(): Promise<number> {
     const now = new Date().toISOString();
     const result = await pool.query(
-      `UPDATE dashq_jobs SET status = 'queued', locked_until = NULL, updated_at = $1 WHERE status = 'running' AND locked_until < $2`,
+      `UPDATE dashq_jobs SET status = 'queued', locked_until = NULL, worker_id = NULL, updated_at = $1 WHERE status = 'running' AND locked_until < $2`,
       [now, now],
     );
     return result.rowCount ?? 0;
@@ -332,6 +340,62 @@ export function createPostgresAdapter(connectionString: string): DatabaseAdapter
   }
 
   // -----------------------------------------------------------------------
+  // Workers
+  // -----------------------------------------------------------------------
+
+  async function registerWorker(worker: Omit<WorkerRecord, "stopped_at">): Promise<void> {
+    await pool.query(
+      `INSERT INTO dashq_workers (id, hostname, pid, concurrency, status, started_at, last_heartbeat)
+       VALUES ($1, $2, $3, $4, 'active', $5, $6)`,
+      [worker.id, worker.hostname, worker.pid, worker.concurrency, worker.started_at, worker.last_heartbeat],
+    );
+  }
+
+  async function heartbeatWorker(workerId: string): Promise<void> {
+    await pool.query(
+      `UPDATE dashq_workers SET last_heartbeat = $1 WHERE id = $2`,
+      [new Date().toISOString(), workerId],
+    );
+  }
+
+  async function deregisterWorker(workerId: string): Promise<void> {
+    await pool.query(
+      `UPDATE dashq_workers SET status = 'stopped', stopped_at = $1 WHERE id = $2`,
+      [new Date().toISOString(), workerId],
+    );
+  }
+
+  async function listWorkers(status?: WorkerStatus): Promise<WorkerWithStats[]> {
+    const where = status ? "WHERE w.status = $1" : "";
+    const params = status ? [status] : [];
+    const result = await pool.query(
+      `SELECT w.*, (SELECT COUNT(*)::int FROM dashq_jobs WHERE worker_id = w.id AND status = 'running') as running_jobs
+       FROM dashq_workers w ${where} ORDER BY w.started_at DESC`,
+      params,
+    );
+    return result.rows as WorkerWithStats[];
+  }
+
+  async function getWorker(id: string): Promise<WorkerWithStats | null> {
+    const result = await pool.query(
+      `SELECT w.*, (SELECT COUNT(*)::int FROM dashq_jobs WHERE worker_id = w.id AND status = 'running') as running_jobs
+       FROM dashq_workers w WHERE w.id = $1`,
+      [id],
+    );
+    return (result.rows[0] as WorkerWithStats) ?? null;
+  }
+
+  async function recoverStaleWorkers(threshold: Date): Promise<number> {
+    const now = new Date().toISOString();
+    const result = await pool.query(
+      `UPDATE dashq_workers SET status = 'stopped', stopped_at = $1
+       WHERE status = 'active' AND last_heartbeat < $2`,
+      [now, threshold.toISOString()],
+    );
+    return result.rowCount ?? 0;
+  }
+
+  // -----------------------------------------------------------------------
   // Return adapter
   // -----------------------------------------------------------------------
 
@@ -354,5 +418,11 @@ export function createPostgresAdapter(connectionString: string): DatabaseAdapter
     getJobCounts,
     deleteOldJobs,
     deleteOldLogs,
+    registerWorker,
+    heartbeatWorker,
+    deregisterWorker,
+    listWorkers,
+    getWorker,
+    recoverStaleWorkers,
   };
 }

@@ -17,6 +17,9 @@ import type {
   JobFilter,
   JobStatus,
   WorkerInfo,
+  WorkerRecord,
+  WorkerWithStats,
+  WorkerStatus,
 } from "../types.js";
 import { runMigrations } from "./schema.js";
 import { generateId } from "./uuid.js";
@@ -36,6 +39,7 @@ const VALID_UPDATE_COLUMNS = new Set([
   "run_at",
   "locked_until",
   "last_error",
+  "worker_id",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -66,6 +70,11 @@ export function createSqliteAdapter(path: string): DatabaseAdapter {
     getLogsByJobAttempt: BetterSqlite3.Statement;
     getJobCounts: BetterSqlite3.Statement;
     deleteOldLogs: BetterSqlite3.Statement;
+    registerWorker: BetterSqlite3.Statement;
+    heartbeatWorker: BetterSqlite3.Statement;
+    deregisterWorker: BetterSqlite3.Statement;
+    getWorkerById: BetterSqlite3.Statement;
+    recoverStaleWorkers: BetterSqlite3.Statement;
   };
 
   // -----------------------------------------------------------------------
@@ -100,19 +109,19 @@ export function createSqliteAdapter(path: string): DatabaseAdapter {
         `SELECT id FROM dashq_jobs WHERE status = 'queued' AND run_at <= ? ORDER BY run_at ASC LIMIT 1`,
       ),
       claimUpdate: db.prepare(
-        `UPDATE dashq_jobs SET status = 'running', locked_until = ?, attempts = attempts + 1, updated_at = ? WHERE id = ? AND status = 'queued'`,
+        `UPDATE dashq_jobs SET status = 'running', locked_until = ?, worker_id = ?, attempts = attempts + 1, updated_at = ? WHERE id = ? AND status = 'queued'`,
       ),
       markSucceeded: db.prepare(
-        `UPDATE dashq_jobs SET status = 'succeeded', locked_until = NULL, updated_at = ? WHERE id = ?`,
+        `UPDATE dashq_jobs SET status = 'succeeded', locked_until = NULL, worker_id = NULL, updated_at = ? WHERE id = ?`,
       ),
       markFailed: db.prepare(
-        `UPDATE dashq_jobs SET status = 'failed', locked_until = NULL, last_error = ?, updated_at = ? WHERE id = ?`,
+        `UPDATE dashq_jobs SET status = 'failed', locked_until = NULL, worker_id = NULL, last_error = ?, updated_at = ? WHERE id = ?`,
       ),
       requeueJob: db.prepare(
-        `UPDATE dashq_jobs SET status = 'queued', locked_until = NULL, updated_at = ? WHERE id = ?`,
+        `UPDATE dashq_jobs SET status = 'queued', locked_until = NULL, worker_id = NULL, updated_at = ? WHERE id = ?`,
       ),
       recoverStaleJobs: db.prepare(
-        `UPDATE dashq_jobs SET status = 'queued', locked_until = NULL, updated_at = ? WHERE status = 'running' AND locked_until < ?`,
+        `UPDATE dashq_jobs SET status = 'queued', locked_until = NULL, worker_id = NULL, updated_at = ? WHERE status = 'running' AND locked_until < ?`,
       ),
       insertLog: db.prepare(
         `INSERT INTO dashq_job_logs (id, job_id, attempt, level, message, timestamp) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -128,6 +137,24 @@ export function createSqliteAdapter(path: string): DatabaseAdapter {
       ),
       deleteOldLogs: db.prepare(
         `DELETE FROM dashq_job_logs WHERE timestamp < ?`,
+      ),
+      registerWorker: db.prepare(
+        `INSERT INTO dashq_workers (id, hostname, pid, concurrency, status, started_at, last_heartbeat)
+         VALUES (?, ?, ?, ?, 'active', ?, ?)`,
+      ),
+      heartbeatWorker: db.prepare(
+        `UPDATE dashq_workers SET last_heartbeat = ? WHERE id = ?`,
+      ),
+      deregisterWorker: db.prepare(
+        `UPDATE dashq_workers SET status = 'stopped', stopped_at = ? WHERE id = ?`,
+      ),
+      getWorkerById: db.prepare(
+        `SELECT w.*, (SELECT COUNT(*) FROM dashq_jobs WHERE worker_id = w.id AND status = 'running') as running_jobs
+         FROM dashq_workers w WHERE w.id = ?`,
+      ),
+      recoverStaleWorkers: db.prepare(
+        `UPDATE dashq_workers SET status = 'stopped', stopped_at = ?
+         WHERE status = 'active' AND last_heartbeat < ?`,
       ),
     };
   }
@@ -168,6 +195,10 @@ export function createSqliteAdapter(path: string): DatabaseAdapter {
     if (filter.job_type !== undefined) {
       conditions.push("job_type = ?");
       params.push(filter.job_type);
+    }
+    if (filter.worker_id !== undefined) {
+      conditions.push("worker_id = ?");
+      params.push(filter.worker_id);
     }
 
     const whereClause =
@@ -247,6 +278,7 @@ export function createSqliteAdapter(path: string): DatabaseAdapter {
 
       const result = stmts.claimUpdate.run(
         lockedUntilIso,
+        workerInfo.worker_id,
         nowIso,
         candidate.id,
       );
@@ -354,6 +386,45 @@ export function createSqliteAdapter(path: string): DatabaseAdapter {
   }
 
   // -----------------------------------------------------------------------
+  // Workers
+  // -----------------------------------------------------------------------
+
+  async function registerWorker(worker: Omit<WorkerRecord, "stopped_at">): Promise<void> {
+    stmts.registerWorker.run(
+      worker.id, worker.hostname, worker.pid, worker.concurrency,
+      worker.started_at, worker.last_heartbeat,
+    );
+  }
+
+  async function heartbeatWorker(workerId: string): Promise<void> {
+    stmts.heartbeatWorker.run(new Date().toISOString(), workerId);
+  }
+
+  async function deregisterWorker(workerId: string): Promise<void> {
+    stmts.deregisterWorker.run(new Date().toISOString(), workerId);
+  }
+
+  async function listWorkers(status?: WorkerStatus): Promise<WorkerWithStats[]> {
+    const where = status ? "WHERE w.status = ?" : "";
+    const params = status ? [status] : [];
+    return db.prepare(
+      `SELECT w.*, (SELECT COUNT(*) FROM dashq_jobs WHERE worker_id = w.id AND status = 'running') as running_jobs
+       FROM dashq_workers w ${where} ORDER BY w.started_at DESC`,
+    ).all(...params) as WorkerWithStats[];
+  }
+
+  async function getWorker(id: string): Promise<WorkerWithStats | null> {
+    const row = stmts.getWorkerById.get(id) as WorkerWithStats | undefined;
+    return row ?? null;
+  }
+
+  async function recoverStaleWorkers(threshold: Date): Promise<number> {
+    const now = new Date().toISOString();
+    const result = stmts.recoverStaleWorkers.run(now, threshold.toISOString());
+    return result.changes;
+  }
+
+  // -----------------------------------------------------------------------
   // Return adapter
   // -----------------------------------------------------------------------
 
@@ -376,5 +447,11 @@ export function createSqliteAdapter(path: string): DatabaseAdapter {
     getJobCounts,
     deleteOldJobs,
     deleteOldLogs,
+    registerWorker,
+    heartbeatWorker,
+    deregisterWorker,
+    listWorkers,
+    getWorker,
+    recoverStaleWorkers,
   };
 }

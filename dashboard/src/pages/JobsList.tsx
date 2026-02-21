@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { useLocation, useSearch } from "wouter";
-import { Eye, RotateCcw, Trash2, MoreHorizontal } from "lucide-react";
+import { Eye, RotateCcw, Trash2, Search, AlertCircle, List } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -10,11 +10,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,7 +30,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { usePolling } from "@/hooks/usePolling";
 import { useApi } from "@/hooks/useApi";
 import { api, type Job, type JobStatus } from "@/api/client";
-import { formatDateTime, truncate } from "@/lib/utils";
+import { formatDateTime, formatRelativeTime, truncate } from "@/lib/utils";
 
 const LIMIT = 20;
 
@@ -51,6 +50,7 @@ export function JobsList() {
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [offset, setOffset] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<Job | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const fetcher = useCallback(
     () =>
@@ -71,6 +71,17 @@ export function JobsList() {
   const jobs = data?.jobs ?? [];
   const total = data?.total ?? 0;
   const jobTypes = typesData?.job_types ?? [];
+
+  const filteredJobs = useMemo(() => {
+    if (!searchQuery.trim()) return jobs;
+    const q = searchQuery.toLowerCase();
+    return jobs.filter(
+      (j) =>
+        j.id.toLowerCase().includes(q) ||
+        j.job_type.toLowerCase().includes(q) ||
+        j.last_error?.toLowerCase().includes(q),
+    );
+  }, [jobs, searchQuery]);
 
   function handleSort(key: string) {
     if (key === sortBy) {
@@ -123,9 +134,14 @@ export function JobsList() {
       header: "Created",
       sortable: true,
       render: (row) => (
-        <span className="text-sm text-muted-foreground">
-          {formatDateTime(row.created_at)}
-        </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="cursor-default text-sm text-muted-foreground">
+              {formatRelativeTime(row.created_at)}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{formatDateTime(row.created_at)}</TooltipContent>
+        </Tooltip>
       ),
     },
     {
@@ -133,9 +149,14 @@ export function JobsList() {
       header: "Run At",
       sortable: true,
       render: (row) => (
-        <span className="text-sm text-muted-foreground">
-          {formatDateTime(row.run_at)}
-        </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="cursor-default text-sm text-muted-foreground">
+              {formatRelativeTime(row.run_at)}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{formatDateTime(row.run_at)}</TooltipContent>
+        </Tooltip>
       ),
     },
     {
@@ -143,69 +164,102 @@ export function JobsList() {
       header: "Error",
       render: (row) =>
         row.last_error ? (
-          <span className="text-sm text-red-600" title={row.last_error}>
-            {truncate(row.last_error, 40)}
-          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex items-center gap-1 text-sm text-red-600 cursor-default">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                {truncate(row.last_error, 40)}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-sm bg-red-950 text-red-200 font-mono text-xs whitespace-pre-wrap">
+              {row.last_error}
+            </TooltipContent>
+          </Tooltip>
         ) : (
-          <span className="text-sm text-muted-foreground">—</span>
+          <span className="text-sm text-muted-foreground">&mdash;</span>
         ),
     },
     {
       key: "actions",
       header: "",
-      className: "w-10",
+      className: "w-24",
       render: (row) => (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 w-8 p-0"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => navigate(`/jobs/${row.id}`)}>
-              <Eye className="mr-2 h-4 w-4" />
-              View
-            </DropdownMenuItem>
-            {row.status === "failed" && (
-              <DropdownMenuItem onClick={() => handleRetry(row)}>
-                <RotateCcw className="mr-2 h-4 w-4" />
-                Retry
-              </DropdownMenuItem>
-            )}
-            {row.status !== "running" && (
-              <DropdownMenuItem
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setDeleteTarget(row);
-                }}
-                className="text-red-600 focus:text-red-600"
+        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => navigate(`/jobs/${row.id}`)}
               >
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+                <Eye />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>View details</TooltipContent>
+          </Tooltip>
+          {row.status === "failed" && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={() => handleRetry(row)}
+                >
+                  <RotateCcw />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Retry job</TooltipContent>
+            </Tooltip>
+          )}
+          {row.status !== "running" && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="text-muted-foreground hover:text-red-600"
+                  onClick={() => setDeleteTarget(row)}
+                >
+                  <Trash2 />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Delete job</TooltipContent>
+            </Tooltip>
+          )}
+        </div>
       ),
     },
   ];
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Jobs</h1>
-        <p className="text-sm text-muted-foreground">
-          Browse and manage queued jobs
-        </p>
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Jobs</h1>
+          <p className="text-sm text-muted-foreground">
+            Browse and manage queued jobs
+          </p>
+        </div>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <span className="tabular-nums font-medium text-foreground">{total}</span> total
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" title="Live" />
+        </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3">
+      {/* Filter toolbar */}
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 p-3">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="text"
+            placeholder="Search jobs..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="h-9 w-56 rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none focus:border-ring focus:ring-ring/50 focus:ring-[3px]"
+          />
+        </div>
+
         <Select
           value={status}
           onValueChange={(v) => {
@@ -252,13 +306,16 @@ export function JobsList() {
       <div className="rounded-lg border border-border">
         <DataTable
           columns={columns}
-          data={jobs}
+          data={filteredJobs}
           loading={loading}
           sortBy={sortBy}
           sortOrder={sortOrder}
           onSort={handleSort}
           onRowClick={(row) => navigate(`/jobs/${row.id}`)}
           rowKey={(row) => row.id}
+          emptyIcon={<List className="h-6 w-6 text-muted-foreground" />}
+          emptyTitle="No jobs found"
+          emptyDescription="Try adjusting your filters or search query."
         />
       </div>
 

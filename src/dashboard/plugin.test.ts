@@ -59,6 +59,12 @@ function mockAdapter(overrides: Partial<DatabaseAdapter> = {}): DatabaseAdapter 
     getJobCounts: vi.fn(),
     deleteOldJobs: vi.fn(),
     deleteOldLogs: vi.fn(),
+    registerWorker: vi.fn(),
+    heartbeatWorker: vi.fn(),
+    deregisterWorker: vi.fn(),
+    listWorkers: vi.fn(),
+    getWorker: vi.fn(),
+    recoverStaleWorkers: vi.fn(),
     ...overrides,
   } as DatabaseAdapter;
 }
@@ -512,6 +518,142 @@ describe("Dashboard API", () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ job_types: [] });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Workers
+  // -------------------------------------------------------------------------
+
+  describe("GET /dashq/api/workers", () => {
+    it("returns workers array", async () => {
+      const workers = [
+        {
+          id: "worker-1",
+          hostname: "web-1",
+          pid: 12345,
+          concurrency: 5,
+          status: "active",
+          started_at: "2025-01-01T00:00:00.000Z",
+          last_heartbeat: "2025-01-01T00:00:10.000Z",
+          stopped_at: null,
+          running_jobs: 2,
+        },
+      ];
+      const adapter = mockAdapter({
+        listWorkers: vi.fn().mockResolvedValue(workers),
+      });
+      const app = await buildApp(adapter);
+
+      const res = await app.inject({ method: "GET", url: "/dashq/api/workers" });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ workers });
+      expect(adapter.listWorkers).toHaveBeenCalledWith(undefined);
+    });
+
+    it("filters by status", async () => {
+      const adapter = mockAdapter({
+        listWorkers: vi.fn().mockResolvedValue([]),
+      });
+      const app = await buildApp(adapter);
+
+      await app.inject({ method: "GET", url: "/dashq/api/workers?status=active" });
+
+      expect(adapter.listWorkers).toHaveBeenCalledWith("active");
+    });
+
+    it("returns 400 for invalid status", async () => {
+      const adapter = mockAdapter();
+      const app = await buildApp(adapter);
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/dashq/api/workers?status=invalid",
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toContain("Invalid status");
+    });
+  });
+
+  describe("GET /dashq/api/workers/:id", () => {
+    it("returns a single worker", async () => {
+      const worker = {
+        id: "worker-1",
+        hostname: "web-1",
+        pid: 12345,
+        concurrency: 5,
+        status: "active",
+        started_at: "2025-01-01T00:00:00.000Z",
+        last_heartbeat: "2025-01-01T00:00:10.000Z",
+        stopped_at: null,
+        running_jobs: 2,
+      };
+      const adapter = mockAdapter({
+        getWorker: vi.fn().mockResolvedValue(worker),
+      });
+      const app = await buildApp(adapter);
+
+      const res = await app.inject({ method: "GET", url: "/dashq/api/workers/worker-1" });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ worker });
+    });
+
+    it("returns 404 for missing worker", async () => {
+      const adapter = mockAdapter({
+        getWorker: vi.fn().mockResolvedValue(null),
+      });
+      const app = await buildApp(adapter);
+
+      const res = await app.inject({ method: "GET", url: "/dashq/api/workers/nonexistent" });
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toEqual({ error: "Worker not found", statusCode: 404 });
+    });
+  });
+
+  describe("GET /dashq/api/workers/:id/jobs", () => {
+    it("returns jobs for a worker", async () => {
+      const worker = {
+        id: "worker-1",
+        hostname: "web-1",
+        pid: 12345,
+        concurrency: 5,
+        status: "active",
+        started_at: "2025-01-01T00:00:00.000Z",
+        last_heartbeat: "2025-01-01T00:00:10.000Z",
+        stopped_at: null,
+        running_jobs: 1,
+      };
+      const jobs = [makeJob({ status: "running" })];
+      const adapter = mockAdapter({
+        getWorker: vi.fn().mockResolvedValue(worker),
+        listJobs: vi.fn().mockResolvedValue({ jobs, total: 1 }),
+      });
+      const app = await buildApp(adapter);
+
+      const res = await app.inject({ method: "GET", url: "/dashq/api/workers/worker-1/jobs" });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ jobs, total: 1 });
+      expect(adapter.listJobs).toHaveBeenCalledWith({
+        status: "running",
+        worker_id: "worker-1",
+      });
+    });
+
+    it("returns 404 when worker not found", async () => {
+      const adapter = mockAdapter({
+        getWorker: vi.fn().mockResolvedValue(null),
+      });
+      const app = await buildApp(adapter);
+
+      const res = await app.inject({ method: "GET", url: "/dashq/api/workers/nonexistent/jobs" });
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toEqual({ error: "Worker not found", statusCode: 404 });
     });
   });
 

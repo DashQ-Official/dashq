@@ -28,13 +28,14 @@ export type SqlQueryRow = (
 export const TABLE_JOBS = "dashq_jobs";
 export const TABLE_JOB_LOGS = "dashq_job_logs";
 export const TABLE_META = "dashq_meta";
+export const TABLE_WORKERS = "dashq_workers";
 
 // ---------------------------------------------------------------------------
 // Schema Version
 // ---------------------------------------------------------------------------
 
 /** The latest schema version. Increment when adding new migrations. */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 // Version 1 — Initial Schema
@@ -85,6 +86,26 @@ CREATE TABLE IF NOT EXISTS ${TABLE_META} (
 );`;
 
 // ---------------------------------------------------------------------------
+// Version 2 — Workers
+// ---------------------------------------------------------------------------
+
+export const CREATE_WORKERS_TABLE = `
+CREATE TABLE IF NOT EXISTS ${TABLE_WORKERS} (
+  id              TEXT PRIMARY KEY,
+  hostname        TEXT NOT NULL,
+  pid             INTEGER NOT NULL,
+  concurrency     INTEGER NOT NULL DEFAULT 1,
+  status          TEXT NOT NULL DEFAULT 'active',
+  started_at      TEXT NOT NULL,
+  last_heartbeat  TEXT NOT NULL,
+  stopped_at      TEXT
+);`;
+
+export const CREATE_WORKERS_STATUS_INDEX = `
+CREATE INDEX IF NOT EXISTS idx_dashq_workers_status
+  ON ${TABLE_WORKERS} (status);`;
+
+// ---------------------------------------------------------------------------
 // Migration Steps
 // ---------------------------------------------------------------------------
 
@@ -109,6 +130,15 @@ const MIGRATIONS: readonly MigrationStep[] = [
       CREATE_JOBS_JOB_TYPE_INDEX,
       CREATE_JOB_LOGS_TABLE,
       CREATE_JOB_LOGS_JOB_ID_INDEX,
+    ],
+  },
+  {
+    version: 2,
+    statements: [
+      CREATE_WORKERS_TABLE,
+      CREATE_WORKERS_STATUS_INDEX,
+      `ALTER TABLE ${TABLE_JOBS} ADD COLUMN worker_id TEXT`,
+      `CREATE INDEX IF NOT EXISTS idx_dashq_jobs_worker_id ON ${TABLE_JOBS} (worker_id)`,
     ],
   },
 ];

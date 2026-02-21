@@ -13,6 +13,9 @@ import type {
   JobFilter,
   WorkerInfo,
   JobStatus,
+  WorkerRecord,
+  WorkerWithStats,
+  WorkerStatus,
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -95,4 +98,24 @@ export type DatabaseAdapter = {
 
   /** Delete log entries older than a date. Returns count deleted. */
   deleteOldLogs(olderThan: Date): Promise<number>;
+
+  // -- Workers ---------------------------------------------------------------
+
+  /** Register a new worker. */
+  registerWorker(worker: Omit<WorkerRecord, "stopped_at">): Promise<void>;
+
+  /** Update the heartbeat timestamp of a worker. */
+  heartbeatWorker(workerId: string): Promise<void>;
+
+  /** Mark a worker as stopped. */
+  deregisterWorker(workerId: string): Promise<void>;
+
+  /** List workers, optionally filtered by status. */
+  listWorkers(status?: WorkerStatus): Promise<WorkerWithStats[]>;
+
+  /** Get a single worker by ID with running job count. */
+  getWorker(id: string): Promise<WorkerWithStats | null>;
+
+  /** Mark stale workers as stopped and return count recovered. */
+  recoverStaleWorkers(threshold: Date): Promise<number>;
 };

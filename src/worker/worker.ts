@@ -6,6 +6,7 @@
  * to get a `{ start, stop }` handle.
  */
 
+import { hostname } from "node:os";
 import type { DatabaseAdapter } from "../db/adapter.js";
 import type { Job, WorkerInfo, WorkerOptions } from "../types.js";
 import { generateId } from "../db/uuid.js";
@@ -24,6 +25,7 @@ const DEFAULT_BACKOFF_MULTIPLIER = 1.5;
 const DEFAULT_LEASE_TIMEOUT = 300_000; // 5 min
 const DEFAULT_STALE_CHECK_INTERVAL = 30_000;
 const DEFAULT_SHUTDOWN_TIMEOUT = 30_000;
+const DEFAULT_HEARTBEAT_INTERVAL = 15_000;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -70,6 +72,7 @@ export function createWorker(
   let currentInterval = pollingInterval;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let staleTimer: ReturnType<typeof setInterval> | null = null;
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   const inFlight = new Set<Promise<void>>();
   let polling = false;
 
@@ -195,6 +198,8 @@ export function createWorker(
   async function recoverStale(): Promise<void> {
     try {
       await adapter.recoverStaleJobs();
+      const threshold = new Date(Date.now() - DEFAULT_HEARTBEAT_INTERVAL * 3);
+      await adapter.recoverStaleWorkers(threshold);
     } catch {
       // Silently ignore recovery errors — will retry next interval
     }
@@ -208,6 +213,24 @@ export function createWorker(
     if (running) return; // idempotent
     running = true;
     currentInterval = pollingInterval;
+
+    // Register worker (fire-and-forget — non-fatal if it fails)
+    const now = new Date().toISOString();
+    adapter.registerWorker({
+      id: workerId,
+      hostname: hostname(),
+      pid: process.pid,
+      concurrency,
+      status: "active",
+      started_at: now,
+      last_heartbeat: now,
+    }).catch(() => {});
+
+    // Periodic heartbeat
+    heartbeatTimer = setInterval(() => {
+      adapter.heartbeatWorker(workerId).catch(() => {});
+    }, DEFAULT_HEARTBEAT_INTERVAL);
+
     staleTimer = setInterval(recoverStale, staleCheckInterval);
     schedulePoll();
   }
@@ -224,6 +247,10 @@ export function createWorker(
       clearInterval(staleTimer);
       staleTimer = null;
     }
+    if (heartbeatTimer !== null) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
 
     // Wait for all in-flight jobs with timeout
     if (inFlight.size > 0) {
@@ -232,6 +259,8 @@ export function createWorker(
       );
       await Promise.race([Promise.allSettled([...inFlight]), timeout]);
     }
+
+    await adapter.deregisterWorker(workerId).catch(() => {});
   }
 
   return { start, stop };

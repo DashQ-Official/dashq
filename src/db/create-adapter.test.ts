@@ -52,6 +52,12 @@ describe("createAdapter", () => {
       "getJobCounts",
       "deleteOldJobs",
       "deleteOldLogs",
+      "registerWorker",
+      "heartbeatWorker",
+      "deregisterWorker",
+      "listWorkers",
+      "getWorker",
+      "recoverStaleWorkers",
     ];
 
     for (const method of expectedMethods) {

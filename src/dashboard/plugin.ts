@@ -8,6 +8,7 @@ import { overviewRoutes } from "./routes/overview.js";
 import { jobRoutes } from "./routes/jobs.js";
 import { jobLogRoutes } from "./routes/job-logs.js";
 import { jobTypeRoutes } from "./routes/job-types.js";
+import { workerRoutes } from "./routes/workers.js";
 
 export type DashboardPluginOptions = {
   adapter: DatabaseAdapter;
@@ -26,6 +27,7 @@ async function dashboardPlugin(
   fastify.register(jobRoutes, { prefix: apiPrefix, adapter });
   fastify.register(jobLogRoutes, { prefix: apiPrefix, adapter });
   fastify.register(jobTypeRoutes, { prefix: apiPrefix });
+  fastify.register(workerRoutes, { prefix: apiPrefix, adapter });
 
   // Static file serving for the dashboard SPA
   const distDir = join(dirname(fileURLToPath(import.meta.url)), "dashboard");

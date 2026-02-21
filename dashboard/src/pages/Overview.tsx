@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   XCircle,
 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SparklineArea } from "@/components/SparklineArea";
 import { usePolling } from "@/hooks/usePolling";
@@ -19,6 +18,7 @@ const statusCards: {
   icon: typeof Clock;
   color: string;
   sparkColor: string;
+  borderColor: string;
 }[] = [
   {
     key: "queued",
@@ -26,6 +26,7 @@ const statusCards: {
     icon: Clock,
     color: "text-blue-600",
     sparkColor: "#2563eb",
+    borderColor: "border-l-blue-500",
   },
   {
     key: "running",
@@ -33,6 +34,7 @@ const statusCards: {
     icon: Loader2,
     color: "text-amber-600",
     sparkColor: "#d97706",
+    borderColor: "border-l-amber-500",
   },
   {
     key: "succeeded",
@@ -40,6 +42,7 @@ const statusCards: {
     icon: CheckCircle2,
     color: "text-emerald-600",
     sparkColor: "#059669",
+    borderColor: "border-l-emerald-500",
   },
   {
     key: "failed",
@@ -47,6 +50,7 @@ const statusCards: {
     icon: XCircle,
     color: "text-red-600",
     sparkColor: "#dc2626",
+    borderColor: "border-l-red-500",
   },
 ];
 
@@ -94,12 +98,15 @@ export function Overview() {
           const history = historyRef.current[card.key];
 
           return (
-            <Card
+            <div
               key={card.key}
-              className="cursor-pointer transition-shadow hover:shadow-md"
+              className={cn(
+                "rounded-xl bg-card shadow-sm hover:shadow-md transition-shadow cursor-pointer border-l-4 p-5",
+                card.borderColor,
+              )}
               onClick={() => navigate(`/jobs?status=${card.key}`)}
             >
-              <CardContent className="flex flex-col gap-3 p-5">
+              <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Icon className={cn("h-4 w-4", card.color)} />
@@ -122,8 +129,8 @@ export function Overview() {
                     />
                   )}
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           );
         })}
       </div>

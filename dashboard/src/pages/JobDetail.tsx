@@ -7,8 +7,6 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   AlertDialog,
@@ -21,13 +19,25 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/StatusBadge";
 import { StateTimeline } from "@/components/StateTimeline";
 import { JsonViewer } from "@/components/JsonViewer";
 import { LogViewer } from "@/components/LogViewer";
 import { usePolling } from "@/hooks/usePolling";
 import { api } from "@/api/client";
-import { formatDateTime, formatRelativeTime } from "@/lib/utils";
+import { cn, formatDateTime, formatRelativeTime } from "@/lib/utils";
+
+const statusBorderColor: Record<string, string> = {
+  queued: "border-l-blue-500",
+  running: "border-l-amber-500",
+  succeeded: "border-l-emerald-500",
+  failed: "border-l-red-500",
+};
 
 export function JobDetail() {
   const params = useParams<{ id: string }>();
@@ -64,7 +74,7 @@ export function JobDetail() {
   if (jobLoading && !job) {
     return (
       <div className="space-y-6">
-        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-48 rounded-lg" />
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <Skeleton className="h-64" />
           <Skeleton className="h-64" />
@@ -85,161 +95,169 @@ export function JobDetail() {
     );
   }
 
+  const metadataItems = [
+    {
+      label: "Attempts",
+      value: `${job.attempts} / ${job.max_attempts}`,
+    },
+    {
+      label: "Created",
+      value: formatRelativeTime(job.created_at),
+      tooltip: formatDateTime(job.created_at),
+    },
+    {
+      label: "Run At",
+      value: formatRelativeTime(job.run_at),
+      tooltip: formatDateTime(job.run_at),
+    },
+    {
+      label: "Updated",
+      value: formatRelativeTime(job.updated_at),
+      tooltip: formatDateTime(job.updated_at),
+    },
+    ...(job.locked_until
+      ? [
+          {
+            label: "Locked Until",
+            value: formatRelativeTime(job.locked_until),
+            tooltip: formatDateTime(job.locked_until),
+          },
+        ]
+      : []),
+  ];
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate("/jobs")}>
-            <ArrowLeft className="mr-1 h-4 w-4" />
-            Back
-          </Button>
-          <Separator orientation="vertical" className="h-6" />
-          <div>
-            <div className="flex items-center gap-2">
-              <code className="text-lg font-semibold">{job.job_type}</code>
-              <StatusBadge status={job.status} />
+      {/* Unified Header Block */}
+      <div
+        className={cn(
+          "rounded-lg bg-card shadow-sm border-l-4",
+          statusBorderColor[job.status] ?? "border-l-border",
+        )}
+      >
+        {/* Top row: nav + identity + actions */}
+        <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="sm" onClick={() => navigate("/jobs")}>
+              <ArrowLeft className="mr-1 h-4 w-4" />
+              Back
+            </Button>
+            <div className="h-6 w-px bg-border" />
+            <div>
+              <div className="flex items-center gap-2">
+                <code className="text-lg font-semibold">{job.job_type}</code>
+                <StatusBadge status={job.status} />
+              </div>
+              <p className="text-xs text-muted-foreground font-mono mt-0.5">
+                {job.id}
+              </p>
             </div>
-            <p className="text-xs text-muted-foreground font-mono mt-0.5">
-              {job.id}
-            </p>
+          </div>
+
+          <div className="flex gap-2">
+            {job.status === "failed" && (
+              <Button variant="outline" size="sm" onClick={handleRetry}>
+                <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                Retry
+              </Button>
+            )}
+            <Button variant="outline" size="sm" onClick={handleRequeue}>
+              <Copy className="mr-1.5 h-3.5 w-3.5" />
+              Requeue
+            </Button>
+            {job.status !== "running" && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700">
+                    <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                    Delete
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete job?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will permanently delete this job and all its logs.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={handleDelete}
+                      className="bg-red-600 hover:bg-red-700"
+                    >
+                      Delete
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
           </div>
         </div>
 
-        {/* Actions */}
-        <div className="flex gap-2">
-          {job.status === "failed" && (
-            <Button variant="outline" size="sm" onClick={handleRetry}>
-              <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-              Retry
-            </Button>
-          )}
-          <Button variant="outline" size="sm" onClick={handleRequeue}>
-            <Copy className="mr-1.5 h-3.5 w-3.5" />
-            Requeue
-          </Button>
-          {job.status !== "running" && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700">
-                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                  Delete
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete job?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This will permanently delete this job and all its logs.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={handleDelete}
-                    className="bg-red-600 hover:bg-red-700"
-                  >
-                    Delete
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          )}
+        {/* Middle row: metadata strip */}
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border/50 px-5 py-3">
+          {metadataItems.map((item) => (
+            <div key={item.label} className="flex items-center gap-1.5 text-sm">
+              <span className="text-muted-foreground">{item.label}</span>
+              {item.tooltip ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="cursor-default tabular-nums font-medium">
+                      {item.value}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>{item.tooltip}</TooltipContent>
+                </Tooltip>
+              ) : (
+                <span className="tabular-nums font-medium">{item.value}</span>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Bottom row: state timeline */}
+        <div className="border-t border-border/50 px-5 py-3">
+          <StateTimeline status={job.status} />
         </div>
       </div>
 
-      {/* Content */}
+      {/* Two-column content */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Left column */}
+        {/* Left column: Arguments + Error */}
         <div className="space-y-6">
-          {/* Metadata */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Details</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                <dt className="text-muted-foreground">Status</dt>
-                <dd>
-                  <StatusBadge status={job.status} />
-                </dd>
-                <dt className="text-muted-foreground">Attempts</dt>
-                <dd className="tabular-nums">
-                  {job.attempts} / {job.max_attempts}
-                </dd>
-                <dt className="text-muted-foreground">Created</dt>
-                <dd title={job.created_at}>
-                  {formatDateTime(job.created_at)}
-                  <span className="ml-1 text-xs text-muted-foreground">
-                    ({formatRelativeTime(job.created_at)})
-                  </span>
-                </dd>
-                <dt className="text-muted-foreground">Run At</dt>
-                <dd title={job.run_at}>{formatDateTime(job.run_at)}</dd>
-                <dt className="text-muted-foreground">Updated</dt>
-                <dd title={job.updated_at}>
-                  {formatDateTime(job.updated_at)}
-                </dd>
-                {job.locked_until && (
-                  <>
-                    <dt className="text-muted-foreground">Locked Until</dt>
-                    <dd>{formatDateTime(job.locked_until)}</dd>
-                  </>
-                )}
-              </dl>
-            </CardContent>
-          </Card>
+          <div>
+            <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
+              Arguments
+            </h3>
+            <JsonViewer data={job.args} />
+          </div>
 
-          {/* State timeline */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Progress</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <StateTimeline status={job.status} />
-            </CardContent>
-          </Card>
-
-          {/* Arguments */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Arguments</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <JsonViewer data={job.args} />
-            </CardContent>
-          </Card>
-
-          {/* Error */}
           {job.last_error && (
-            <Card className="border-red-200">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base text-red-600">Error</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <pre className="overflow-auto rounded-lg bg-red-50 p-4 text-sm text-red-800 font-mono whitespace-pre-wrap">
+            <div>
+              <h3 className="text-xs font-medium uppercase tracking-wider text-red-600 mb-3">
+                Error
+              </h3>
+              <div className="rounded-lg border-l-4 border-l-red-400 bg-red-50 p-4">
+                <pre className="overflow-auto text-sm text-red-800 font-mono whitespace-pre-wrap">
                   {job.last_error}
                 </pre>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           )}
         </div>
 
-        {/* Right column — Logs */}
+        {/* Right column: Logs */}
         <div>
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Logs</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <LogViewer
-                logs={logs}
-                selectedAttempt={selectedAttempt}
-                onAttemptChange={setSelectedAttempt}
-                maxAttempts={job.attempts}
-              />
-            </CardContent>
-          </Card>
+          <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
+            Logs
+          </h3>
+          <LogViewer
+            logs={logs}
+            selectedAttempt={selectedAttempt}
+            onAttemptChange={setSelectedAttempt}
+            maxAttempts={job.attempts}
+          />
         </div>
       </div>
     </div>

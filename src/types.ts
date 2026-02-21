@@ -35,6 +35,8 @@ export type Job = {
   run_at: string;
   /** ISO 8601 timestamp — worker lease expiry. Null when not locked. */
   locked_until: string | null;
+  /** ID of the worker that claimed this job. Null when not locked. */
+  worker_id: string | null;
   /** Most recent error message/stack trace. Null if no error. */
   last_error: string | null;
   /** ISO 8601 timestamp — when the job was created. */
@@ -113,6 +115,8 @@ export type JobFilter = {
   status?: JobStatus;
   /** Filter by job type (exact match). */
   job_type?: string;
+  /** Filter by worker ID (exact match). */
+  worker_id?: string;
   /** Number of rows to skip. Defaults to 0. */
   offset?: number;
   /** Maximum number of rows to return. Defaults to 50. */
@@ -133,6 +137,27 @@ export type WorkerInfo = {
   worker_id: string;
   /** How long the job lease should last, in milliseconds. */
   lease_duration_ms: number;
+};
+
+// ---------------------------------------------------------------------------
+// Worker Record
+// ---------------------------------------------------------------------------
+
+export type WorkerStatus = "active" | "stopped";
+
+export type WorkerRecord = {
+  id: string;
+  hostname: string;
+  pid: number;
+  concurrency: number;
+  status: WorkerStatus;
+  started_at: string;
+  last_heartbeat: string;
+  stopped_at: string | null;
+};
+
+export type WorkerWithStats = WorkerRecord & {
+  running_jobs: number;
 };
 
 // ---------------------------------------------------------------------------

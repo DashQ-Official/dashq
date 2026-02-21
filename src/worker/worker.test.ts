@@ -56,6 +56,12 @@ function createMockAdapter(
     })),
     deleteOldJobs: vi.fn(async () => 0),
     deleteOldLogs: vi.fn(async () => 0),
+    registerWorker: vi.fn(async () => {}),
+    heartbeatWorker: vi.fn(async () => {}),
+    deregisterWorker: vi.fn(async () => {}),
+    listWorkers: vi.fn(async () => []),
+    getWorker: vi.fn(async () => null),
+    recoverStaleWorkers: vi.fn(async () => 0),
     ...overrides,
   };
 }

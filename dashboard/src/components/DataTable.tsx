@@ -7,7 +7,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Inbox } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type Column<T> = {
@@ -27,6 +27,9 @@ type DataTableProps<T> = {
   onSort?: (key: string) => void;
   onRowClick?: (row: T) => void;
   rowKey: (row: T) => string;
+  emptyIcon?: React.ReactNode;
+  emptyTitle?: string;
+  emptyDescription?: string;
 };
 
 export function DataTable<T>({
@@ -38,6 +41,9 @@ export function DataTable<T>({
   onSort,
   onRowClick,
   rowKey,
+  emptyIcon,
+  emptyTitle = "No results",
+  emptyDescription,
 }: DataTableProps<T>) {
   return (
     <Table>
@@ -96,9 +102,17 @@ export function DataTable<T>({
           <TableRow>
             <TableCell
               colSpan={columns.length}
-              className="h-24 text-center text-muted-foreground"
+              className="h-48"
             >
-              No results.
+              <div className="flex flex-col items-center justify-center gap-2 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                  {emptyIcon ?? <Inbox className="h-6 w-6 text-muted-foreground" />}
+                </div>
+                <p className="text-sm font-medium text-foreground">{emptyTitle}</p>
+                {emptyDescription && (
+                  <p className="text-sm text-muted-foreground">{emptyDescription}</p>
+                )}
+              </div>
             </TableCell>
           </TableRow>
         )}

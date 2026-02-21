@@ -112,7 +112,7 @@ describe("schema", () => {
 
       const queryRow = vi.fn(async (sql: string) => {
         if (sql.includes("schema_version")) {
-          return { value: "1" };
+          return { value: String(SCHEMA_VERSION) };
         }
         return null;
       });
@@ -136,6 +136,10 @@ describe("schema", () => {
           /INSERT INTO dashq_meta .* VALUES \('schema_version', '(\d+)'\)/,
         );
         if (insertMatch) storedVersion = insertMatch[1];
+        const updateMatch = sql.match(
+          /UPDATE dashq_meta SET value = '(\d+)'/,
+        );
+        if (updateMatch) storedVersion = updateMatch[1];
       });
 
       const queryRow = vi.fn(async (sql: string) => {
@@ -146,7 +150,7 @@ describe("schema", () => {
       });
 
       const result = await runMigrations(execute, queryRow, "postgres");
-      expect(result).toBe(1);
+      expect(result).toBe(SCHEMA_VERSION);
     });
 
     it("is idempotent — second run produces no migration DDL", async () => {
@@ -172,7 +176,7 @@ describe("schema", () => {
 
       // First run — applies migrations
       await runMigrations(execute, queryRow, "sqlite");
-      expect(storedVersion).toBe("1");
+      expect(storedVersion).toBe(String(SCHEMA_VERSION));
 
       // Reset call tracking
       execute.mockClear();
